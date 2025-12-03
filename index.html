@@ -1,17 +1,11 @@
-<!-- 高级版：支持手势切换星球 + 右上角摄像头画面 + 太阳系缩放 + 流星特效 -->
-<!-- 注意：此为完整可运行框架，你可直接复制并运行。若需进一步微调，我可以继续扩展。 -->
-
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>高级太阳系 - 手势控制版</title>
+<title>高级太阳系 - 手势控制版 (增强版)</title>
 
-<!-- Three.js -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r152/three.min.js"></script>
-
-<!-- Mediapipe Hands 手势识别 -->
 <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
@@ -38,12 +32,14 @@ body {
     height: 120px;
     border: 2px solid rgba(255,255,255,0.3);
     border-radius: 6px;
+    box-shadow: 0 0 10px rgba(0,0,0,0.5);
     overflow: hidden;
     z-index: 10;
 }
 #camera-preview video {
     width: 100%;
     height: 100%;
+    transform: scaleX(-1); /* 镜像翻转摄像头画面，更符合用户直觉 */
 }
 
 /* 星球名称 HUD */
@@ -52,9 +48,10 @@ body {
     top: 20px;
     left: 20px;
     color: #ffd88b;
-    font-size: 20px;
+    font-size: 24px;
+    font-weight: bold;
     letter-spacing: 2px;
-    text-shadow: 0 0 8px rgba(255,200,150,0.6);
+    text-shadow: 0 0 10px rgba(255,200,150,0.8);
     z-index: 10;
 }
 </style>
@@ -63,7 +60,7 @@ body {
 
 <div id="scene-container"></div>
 <div id="camera-preview"><video id="input-video" autoplay muted playsinline></video></div>
-<div id="planet-name">土星</div>
+<div id="planet-name"></div>
 
 <script>
 /********************************************************************
@@ -77,29 +74,76 @@ camera.position.set(0, 40, 140);
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.setPixelRatio(window.devicePixelRatio);
+renderer.toneMapping = THREE.ACESFilmicToneMapping; // 增强光影效果
+renderer.toneMappingExposure = 1.2;
 container.appendChild(renderer.domElement);
 
-// 黑色宇宙背景 - 使用渐变色替代CubeTexture
-const loader = new THREE.TextureLoader();
-const bgTexture = loader.load('data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==');
-scene.background = bgTexture;
+const textureLoader = new THREE.TextureLoader();
+
+// 恒星背景：使用CubeTextureLoader加载真实的星空
+const cubeTextureLoader = new THREE.CubeTextureLoader();
+scene.background = cubeTextureLoader.load([
+    'https://threejs.org/examples/textures/cube/skyboxsun25deg/px.jpg',
+    'https://threejs.org/examples/textures/cube/skyboxsun25deg/nx.jpg',
+    'https://threejs.org/examples/textures/cube/skyboxsun25deg/py.jpg',
+    'https://threejs.org/examples/textures/cube/skyboxsun25deg/ny.jpg',
+    'https://threejs.org/examples/textures/cube/skyboxsun25deg/pz.jpg',
+    'https://threejs.org/examples/textures/cube/skyboxsun25deg/nz.jpg'
+]);
+
+// 响应式设计
+window.addEventListener('resize', () => {
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
 
 /********************************************************************
- * 2. 太阳系：行星切换
+ * 2. 太阳系：行星切换 (使用真实贴图)
  ********************************************************************/
 let planets = [];
 let planetIndex = 5; // 初始：土星
 const planetNames = ['水星','金星','地球','火星','木星','土星','天王星','海王星'];
 
-function addPlanet(name, size, distance, color, ring=false){
-    const geo = new THREE.SphereGeometry(size, 64, 64);
-    const mat = new THREE.MeshStandardMaterial({ color });
-    const planet = new THREE.Mesh(geo, mat);
-    planet.position.x = distance;
+// 基础参数和贴图路径
+const PLANET_DATA = [
+    { name: '水星', size: 3, distance: 20, map: 'https://threejs.org/examples/textures/planets/mercury.jpg' },
+    { name: '金星', size: 5, distance: 30, map: 'https://threejs.org/examples/textures/planets/venus.jpg' },
+    { name: '地球', size: 5.5, distance: 40, map: 'https://threejs.org/examples/textures/planets/earth_atmos_4096.jpg' },
+    { name: '火星', size: 4.5, distance: 50, map: 'https://threejs.org/examples/textures/planets/mars.jpg' },
+    { name: '木星', size: 10, distance: 70, map: 'https://threejs.org/examples/textures/planets/jupiter.jpg' },
+    { name: '土星', size: 9, distance: 95, map: 'https://threejs.org/examples/textures/planets/saturn.jpg', ring: true },
+    { name: '天王星', size: 7, distance: 120, map: 'https://threejs.org/examples/textures/planets/uranus.jpg', ring: true },
+    { name: '海王星', size: 7, distance: 140, map: 'https://threejs.org/examples/textures/planets/neptune.jpg' }
+];
 
-    if (ring) {
-        const ringGeo = new THREE.RingGeometry(size*1.3, size*2.2, 128);
-        const ringMat = new THREE.MeshBasicMaterial({ color: 0xaaaaaa, side: THREE.DoubleSide });
+function addPlanet(data){
+    const geo = new THREE.SphereGeometry(data.size, 64, 64);
+    const mat = new THREE.MeshStandardMaterial({ 
+        map: textureLoader.load(data.map) 
+    });
+    const planet = new THREE.Mesh(geo, mat);
+    planet.position.x = data.distance;
+    
+    // 自转轴倾斜，让行星看起来更真实
+    planet.rotation.z = Math.PI * (Math.random() * 0.1 + 0.05);
+
+    if (data.ring) {
+        // 土星环/天王星环使用不同颜色
+        const ringColor = data.name === '土星' ? 0xaaaaaa : 0xddddff;
+        const ringGeo = new THREE.RingGeometry(data.size * 1.3, data.size * 2.2, 128);
+        
+        // 环贴图
+        const ringMap = data.name === '土星' ? textureLoader.load('https://threejs.org/examples/textures/planets/saturn_ring.png') : null;
+        
+        const ringMat = new THREE.MeshBasicMaterial({ 
+            map: ringMap,
+            color: ringColor, 
+            side: THREE.DoubleSide, 
+            transparent: true,
+            opacity: 0.8
+        });
         const ringMesh = new THREE.Mesh(ringGeo, ringMat);
         ringMesh.rotation.x = Math.PI / 2;
         planet.add(ringMesh);
@@ -109,38 +153,84 @@ function addPlanet(name, size, distance, color, ring=false){
     planets.push(planet);
 }
 
-addPlanet('水星', 3, 20, 0xaaaaaa);
-addPlanet('金星', 5, 30, 0xffcc88);
-addPlanet('地球', 5.5, 40, 0x3366ff);
-addPlanet('火星', 4.5, 50, 0xff5522);
-addPlanet('木星', 10, 70, 0xd8c891);
-addPlanet('土星', 9, 95, 0xd8c571, true);
-addPlanet('天王星', 7, 120, 0x55ddff);
-addPlanet('海王星', 7, 140, 0x5577ff);
+PLANET_DATA.forEach(addPlanet);
+
+// 初始设置星球名称
+document.getElementById('planet-name').innerText = planetNames[planetIndex];
+
 
 /********************************************************************
- * 3. 流星特效
+ * 3. 流星特效 (优化为星群)
  ********************************************************************/
-const meteors = [];
-function spawnMeteor(){
-    const geo = new THREE.SphereGeometry(0.4, 6, 6);
-    const mat = new THREE.MeshBasicMaterial({ color: 0xffffff });
-    const m = new THREE.Mesh(geo, mat);
+const STAR_COUNT = 5000;
+const starGeometry = new THREE.BufferGeometry();
+const starVertices = [];
+const starMaterial = new THREE.PointsMaterial({ color: 0xffffff, size: 0.8, blending: THREE.AdditiveBlending });
 
-    m.position.set(200, Math.random()*80-40, Math.random()*80-40);
-    m.velocity = new THREE.Vector3(-3 - Math.random()*2, 0, 0);
-
-    scene.add(m);
-    meteors.push(m);
+for (let i = 0; i < STAR_COUNT; i++) {
+    const x = (Math.random() - 0.5) * 4000;
+    const y = (Math.random() - 0.5) * 4000;
+    const z = (Math.random() - 0.5) * 4000;
+    starVertices.push(x, y, z);
 }
-setInterval(spawnMeteor, 2500);
+starGeometry.setAttribute('position', new THREE.Float32BufferAttribute(starVertices, 3));
+const stars = new THREE.Points(starGeometry, starMaterial);
+scene.add(stars);
+
+// 流星群（代替单个流星，性能更好）
+const meteorGeometry = new THREE.BufferGeometry();
+const meteorMaterial = new THREE.PointsMaterial({ color: 0xffaaaa, size: 1.5, blending: THREE.AdditiveBlending, map: createSparkTexture() });
+const meteorVertices = [];
+const meteorVelocities = [];
+
+for (let i = 0; i < 500; i++) {
+    meteorVertices.push(
+        Math.random() * 400 - 200, 
+        Math.random() * 400 - 200, 
+        Math.random() * 400 - 200
+    );
+    meteorVelocities.push(-0.5 - Math.random() * 0.5, 0, 0); // 统一向负X轴移动
+}
+meteorGeometry.setAttribute('position', new THREE.Float32BufferAttribute(meteorVertices, 3));
+const meteorParticles = new THREE.Points(meteorGeometry, meteorMaterial);
+scene.add(meteorParticles);
+
+function createSparkTexture() {
+    const canvas = document.createElement('canvas');
+    canvas.width = 64;
+    canvas.height = 64;
+    const ctx = canvas.getContext('2d');
+    const gradient = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
+    gradient.addColorStop(0.3, 'rgba(255,255,255,1)');
+    gradient.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, 64, 64);
+    return new THREE.CanvasTexture(canvas);
+}
+
 
 /********************************************************************
- * 4. 灯光
+ * 4. 灯光 (加入环境光和太阳球体)
  ********************************************************************/
-const sunLight = new THREE.PointLight(0xffffff, 2);
+// 太阳球体 (作为光源)
+const sunGeo = new THREE.SphereGeometry(15, 64, 64);
+const sunMat = new THREE.MeshBasicMaterial({ 
+    color: 0xffffee, 
+    emissive: 0xffffee, 
+    emissiveIntensity: 1 
+});
+const sun = new THREE.Mesh(sunGeo, sunMat);
+scene.add(sun);
+
+// 点光源 (提供光照)
+const sunLight = new THREE.PointLight(0xffffff, 400, 0, 0); // 增加强度
 sunLight.position.set(0, 0, 0);
 scene.add(sunLight);
+
+// 环境光 (柔化阴影)
+const ambientLight = new THREE.AmbientLight(0xffffff, 0.1);
+scene.add(ambientLight);
+
 
 /********************************************************************
  * 5. 手势识别 Mediapipe
@@ -148,9 +238,9 @@ scene.add(sunLight);
 const videoEl = document.getElementById('input-video');
 let cameraUtil;
 
-let gestureRotate = 0;     // 旋转选择星球
-let gestureZoom = 1;       // 太阳系缩放（拉近/拉远）
-let lastSwitchTime = 0;     // 防抖：记录上次切换时间
+let gestureZoom = 1;       
+let lastSwitchTime = 0;     
+let currentCameraOffset = new THREE.Vector3(0, 0, 0); // 相机目标偏移
 
 const hands = new Hands({locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${f}`});
 hands.setOptions({
@@ -161,30 +251,45 @@ hands.setOptions({
 });
 
 hands.onResults(results => {
-    if (!results.multiHandLandmarks.length) return;
+    if (!results.multiHandLandmarks.length) {
+        // 如果没有检测到手，将缩放复位到正常值
+        gestureZoom = THREE.MathUtils.lerp(gestureZoom, 1, 0.05);
+        return;
+    }
     const lm = results.multiHandLandmarks[0];
 
-    const pinchDist = Math.hypot(
-        lm[4].x - lm[8].x,
-        lm[4].y - lm[8].y
-    );
+    // 食指(8)和拇指(4)之间的归一化距离
+    const pinchDist = Math.hypot(lm[4].x - lm[8].x, lm[4].y - lm[8].y);
 
-    // 手指夹紧 → 缩小，手指张开 → 放大
-    gestureZoom = THREE.MathUtils.lerp(gestureZoom, 1 + (0.3 - pinchDist) * 2, 0.1);
-    gestureZoom = THREE.MathUtils.clamp(gestureZoom, 0.2, 2.2);
+    // 缩放逻辑 (手势缩放)
+    gestureZoom = THREE.MathUtils.lerp(gestureZoom, 1 + (0.3 - pinchDist) * 3, 0.1);
+    gestureZoom = THREE.MathUtils.clamp(gestureZoom, 0.15, 2.5);
 
-    // 旋转手 → 切换星球
-    const handRoll = lm[0].x - lm[5].x;
-    gestureRotate += handRoll * 0.1;
-
-    // 防抖：500ms内只能切换一次
+    // 切换逻辑 (手腕滚动)
+    // 采用手腕(0)和中指基部(9)的X坐标差来判断左右倾斜
+    const handRoll = lm[0].x - lm[9].x; 
+    
+    // 阈值：稍微大一点的倾斜才触发
+    const threshold = 0.1; 
     const now = Date.now();
-    if (Math.abs(handRoll) > 0.15 && now - lastSwitchTime > 500) {
+    
+    if (Math.abs(handRoll) > threshold && now - lastSwitchTime > 600) {
         lastSwitchTime = now;
-        if (handRoll > 0) planetIndex = (planetIndex + 1) % planets.length;
-        else planetIndex = (planetIndex - 1 + planets.length) % planets.length;
+        
+        // Mediapipe 的X轴方向通常是镜像的，需要反转判断
+        if (handRoll < -threshold) { // 手腕向右倾斜 (手掌朝左)
+            planetIndex = (planetIndex + 1) % planets.length;
+        } else if (handRoll > threshold) { // 手腕向左倾斜 (手掌朝右)
+            planetIndex = (planetIndex - 1 + planets.length) % planets.length;
+        }
         document.getElementById('planet-name').innerText = planetNames[planetIndex];
     }
+    
+    // 平移逻辑 (手掌在画面中的位置) - 可用于微调视角
+    // cameraUtil.width/height 是 320x240，lm.x/y 是 0到1
+    currentCameraOffset.x = THREE.MathUtils.lerp(currentCameraOffset.x, (lm[0].x - 0.5) * 50, 0.1);
+    currentCameraOffset.y = THREE.MathUtils.lerp(currentCameraOffset.y, -(lm[0].y - 0.5) * 50, 0.1);
+
 });
 
 /********************************************************************
@@ -202,35 +307,56 @@ cameraUtil.start();
  ********************************************************************/
 function animate(){
     requestAnimationFrame(animate);
+    const delta = 0.01; // 旋转速度系数
 
-    // 流星移动 - 修复内存泄漏
-    for (let i = meteors.length - 1; i >= 0; i--) {
-        const m = meteors[i];
-        m.position.add(m.velocity);
-        if (m.position.x < -200) {
-            scene.remove(m);
-            meteors.splice(i, 1); // 从数组中删除，防止内存泄漏
+    // 移动流星群
+    const positions = meteorParticles.geometry.attributes.position.array;
+    for (let i = 0; i < positions.length; i += 3) {
+        positions[i] += meteorVelocities[i / 3]; // X轴
+        // 流星重置
+        if (positions[i] < -200) {
+            positions[i] = 200;
         }
     }
+    meteorParticles.geometry.attributes.position.needsUpdate = true;
+    
+    // 行星自转
+    planets.forEach(p => {
+        p.rotation.y += delta * 0.1;
+    });
 
-    // 聚焦选中的星球
+
+    // 聚焦选中的星球 - 平滑移动
     const targetPlanet = planets[planetIndex];
-    camera.position.lerp(
-        new THREE.Vector3(
-            targetPlanet.position.x + 40 * gestureZoom,
-            20 * gestureZoom,
-            90 * gestureZoom
-        ),
-        0.05
+    
+    // 计算目标相机位置
+    const targetPosition = new THREE.Vector3(
+        targetPlanet.position.x + 30 * gestureZoom + currentCameraOffset.x,
+        20 * gestureZoom + currentCameraOffset.y,
+        70 * gestureZoom
     );
-    camera.lookAt(targetPlanet.position);
+
+    // 使用 lerp 平滑移动相机
+    camera.position.lerp(targetPosition, 0.04);
+    
+    // 平滑地将相机对准目标星球
+    const targetLookAt = targetPlanet.position.clone();
+    
+    // 优化：避免 camera.lookAt() 调用时不断创建 Vector3
+    const tempLookAt = new THREE.Vector3();
+    tempLookAt.copy(camera.position).lerp(targetLookAt, 0.1); 
+    camera.lookAt(tempLookAt.clone()); 
+
 
     renderer.render(scene, camera);
 }
 
 animate();
 
-/********************************************************************/
+/********************************************************************
+ * 8. 初始化名称
+ ********************************************************************/
+document.getElementById('planet-name').innerText = PLANET_DATA[planetIndex].name;
 </script>
 </body>
 </html>
